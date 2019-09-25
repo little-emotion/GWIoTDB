@@ -64,6 +64,7 @@
             <manifest>
               <addClasspath>true</addClasspath>
               <mainClass>consumer.ConsumerManager</mainClass>
+              <!--<mainClass>db.test</mainClass>-->
             </manifest>
           </archive>
           <descriptorRefs>

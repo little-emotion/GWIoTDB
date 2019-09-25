@@ -1,7 +1,7 @@
 package consumer;
 
 public enum ConsumerProperties {
-  ZK_URL("zookeeper.connect", "10.12.20.16:2181"), CONSUMER_GROUP_ID("group.id", "iotdb_consumers17"),
+  ZK_URL("zookeeper.connect", "10.12.20.16:2181"), CONSUMER_GROUP_ID("group.id", "iotdb_consumers19"),
   TOPIC("topic", "all-tsdw-raw"), CONSUMER_THREAD_NUM("consumer_thread_num", 8), IOTDB_IP(
       "iotdb_ip", "10.12.20.58"), IOTDB_PORT("iotdb_port", 6667), IOTDB_USER("iotdb_user",
       "root"), IOTDB_PASSWARD("iotdb_passward", "root"), IOTDB_GROUP_NUM("iotdb_group_num", 8);

@@ -4,11 +4,12 @@
 	<appender name="FILEERROR" class="ch.qos.logback.core.rolling.RollingFileAppender">
 		<file>logs/log_error.log</file>
    		<rollingPolicy class="ch.qos.logback.core.rolling.TimeBasedRollingPolicy">
-   			<fileNamePattern>${BENCHMARK_HOME}/logs/log-error-%d{yyyy-MM-dd}.%i.log</fileNamePattern>
+   			<fileNamePattern>logs/log-error-%d{yyyy-MM-dd}.%i.log</fileNamePattern>
    			<timeBasedFileNamingAndTriggeringPolicy class="ch.qos.logback.core.rolling.SizeAndTimeBasedFNATP">
        	 		<maxFileSize>2MB</maxFileSize>
+						<maxHistory>30</maxHistory>
+						<totalSizeCap>6GB</totalSizeCap>
     		</timeBasedFileNamingAndTriggeringPolicy>
-				<totalSizeCap>10GB</totalSizeCap>
    		</rollingPolicy>
 		<append>true</append>
 		<encoder class="ch.qos.logback.classic.encoder.PatternLayoutEncoder">
@@ -48,6 +49,8 @@
    			<fileNamePattern>${BENCHMARK_HOME}/logs/log-info-%d{yyyy-MM-dd}.%i.log</fileNamePattern>
    			<timeBasedFileNamingAndTriggeringPolicy class="ch.qos.logback.core.rolling.SizeAndTimeBasedFNATP">
        	 		<maxFileSize>200MB</maxFileSize>
+						<maxHistory>20</maxHistory>
+						<totalSizeCap>4GB</totalSizeCap>
     		</timeBasedFileNamingAndTriggeringPolicy>
    		</rollingPolicy>
 		<append>true</append>
@@ -69,6 +72,7 @@
    			<fileNamePattern>${BENCHMARK_HOME}/logs/log-debug-%d{yyyy-MM-dd}.%i.log</fileNamePattern>
    			<timeBasedFileNamingAndTriggeringPolicy class="ch.qos.logback.core.rolling.SizeAndTimeBasedFNATP">
        	 		<maxFileSize>200MB</maxFileSize>
+						<totalSizeCap>4GB</totalSizeCap>
     		</timeBasedFileNamingAndTriggeringPolicy>
    		</rollingPolicy>
 		<append>true</append>

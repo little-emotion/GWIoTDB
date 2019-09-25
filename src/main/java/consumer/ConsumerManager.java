@@ -11,11 +11,9 @@ import static consumer.ConsumerProperties.TOPIC;
 
 import db.IoTDB;
 import java.util.HashMap;
-import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Properties;
-import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -31,6 +29,7 @@ import kafka.serializer.StringDecoder;
 import kafka.utils.VerifiableProperties;
 import org.apache.iotdb.session.IoTDBSessionException;
 import org.apache.iotdb.session.Session;
+import org.apache.iotdb.tsfile.file.metadata.enums.TSDataType;
 import org.json.JSONObject;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -44,14 +43,14 @@ public class ConsumerManager {
   private ExecutorService consumerPool;
 
   private int threadNum;
+  private int groupNum;
   private String topic;
 
   /**
    * outer map: key--wfid, inner map: key--wtid, value--set of names in fields.
    */
-  private ConcurrentHashMap<String, ConcurrentHashMap<String, Set<String>>> schema;
+  private ConcurrentHashMap<String, ConcurrentHashMap<String, ConcurrentHashMap <String, TSDataType> >> schema;
 
-  private final static int TRY_NUM = 3;
 
   private AtomicLong timeSeriesNum = new AtomicLong();
   private AtomicLong insertPointNum = new AtomicLong();
@@ -80,7 +79,7 @@ public class ConsumerManager {
     schema = new ConcurrentHashMap<>();
   }
 
-  public void consume() {
+  public void consume() throws IoTDBSessionException {
     Map<String, Integer> topicCountMap = new HashMap<>();
     topicCountMap.put(topic, threadNum);
 
@@ -89,11 +88,15 @@ public class ConsumerManager {
     Map<String, List<KafkaStream<String, String>>> consumerMap = consumerConnector
         .createMessageStreams(topicCountMap, keyDecoder, valueDecoder);
     List<KafkaStream<String, String>> streams = consumerMap.get(topic);
-
+    groupNum = Integer.parseInt(IOTDB_GROUP_NUM.getDefaultValue().toString());
+    IoTDB ioTDB = new IoTDB();
+    ioTDB.registerStorageGroup(groupNum);
+    ioTDB.closeSession();
     for (final KafkaStream<String, String> stream : streams) {
       consumerPool.submit(new ConsumeTask(stream, timeSeriesNum, insertPointNum, dropPointNum));
     }
   }
+
 
 
   class ConsumeTask implements Runnable {
@@ -115,10 +118,8 @@ public class ConsumerManager {
           IOTDB_PASSWARD.getDefaultValue().toString());
       try {
         session.open();
-
-        ioTDB = new IoTDB(session, timeSeriesNum, pointNum, dropPointNum);
-        int groupNum = Integer.parseInt(IOTDB_GROUP_NUM.getDefaultValue().toString());
-        ioTDB.registerStorageGroup(groupNum);
+        ioTDB = new IoTDB(session, schema, timeSeriesNum, pointNum, dropPointNum);
+        ioTDB.setGroupNum(groupNum);
       } catch (IoTDBSessionException e) {
         e.printStackTrace();
       }
@@ -143,62 +144,26 @@ public class ConsumerManager {
           long timestamp = Long.parseLong(json.get("timestamp").toString());
           String wfid = tags.get("wfid").toString();
           String wtid = tags.get("wtid").toString();
-          registerSchema(wfid, wtid, fields.keySet());
           ioTDB.insert(wfid, wtid, timestamp, fields.toMap());
         } catch (Exception e) {
-          logger.error("Receiving msg failed.", e);
+          if(!e.toString().contains(null)){
+            logger.error("Receiving msg failed.", e);
+          }
           continue;
         }
-        // TODO parse the msg and send it to iotdb
       }
     }
 
-    private void registerSchema(String wfid, String wtid, Set<String> keySet) {
 
-      schema.putIfAbsent(wfid, new ConcurrentHashMap<>());
-      schema.get(wfid).putIfAbsent(wtid, new HashSet<>());
-      Set<String> setInSchema = schema.get(wfid).get(wtid);
-
-      synchronized (setInSchema) {
-        for (String key : keySet) {
-          if (!setInSchema.contains(key)) {
-            for (int i = 0; i < TRY_NUM; i++) {
-              //register
-              boolean res = ioTDB.registerTimeSeries(wfid, wtid, key);
-              //success
-              if (res) {
-                setInSchema.add(key);
-                break;
-              }
-              // retry
-              else {
-                Session session = new Session(IOTDB_IP.getDefaultValue().toString(),
-                    IOTDB_PORT.getDefaultValue().toString(),
-                    IOTDB_USER.getDefaultValue().toString(),
-                    IOTDB_PASSWARD.getDefaultValue().toString());
-                try {
-                  session.open();
-                } catch (IoTDBSessionException e) {
-                  logger.error("session create exception, {}", e);
-                  e.printStackTrace();
-                }
-                ioTDB.setSession(session);
-              }
-            }
-          } // if
-        }// for
-      }
-
-    }
   }
 
-  public static void main(String[] args) {
+  public static void main(String[] args) throws IoTDBSessionException {
     // TODO read the properties, create a manager and run it
     Properties properties = loadProperties();
     ConsumerManager manager = new ConsumerManager(properties);
     manager.consume();
 
-    long internalTimeIns = 5;
+    long internalTimeIns = 60;
     new ScheduledThreadPoolExecutor(1)
         .scheduleAtFixedRate(manager.new LogThread(internalTimeIns), 0, internalTimeIns,
             TimeUnit.SECONDS);
@@ -217,13 +182,14 @@ public class ConsumerManager {
     @Override
     public void run() {
       long nowNum = insertPointNum.get();
-      logger.warn(
-          "Total timeseries number is {}, total point is {}, rate is {} points/s. Drop point is {}.",
+      logger.info(
+          "Total timeseries number is {}, success points number is {}, rate is {} points/s. Error points num is {}.",
           timeSeriesNum.get(), nowNum, (nowNum - lastNum) / internalTime, dropPointNum.get());
       lastNum = nowNum;
 
     }
   }
+
 
   private static Properties loadProperties() {
     Properties properties = new Properties();

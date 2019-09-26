@@ -16,7 +16,6 @@ import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import org.apache.iotdb.rpc.TSStatusCode;
 import org.apache.iotdb.service.rpc.thrift.TSStatus;
-import org.apache.iotdb.service.rpc.thrift.TSStatusType;
 import org.apache.iotdb.session.IoTDBSessionException;
 import org.apache.iotdb.session.Session;
 import org.apache.iotdb.tsfile.file.metadata.enums.CompressionType;
@@ -29,11 +28,11 @@ public class IoTDB {
 
   private static final Logger LOGGER = LoggerFactory.getLogger(IoTDB.class);
   private static final String GROUP_PREFIX = "root.g_";
-  private static final Pattern PATTERN = Pattern.compile("[-]{0,1}[0-9]+[.]{0,1}[0-9]*[dD]{0,1}");
-  private final static int TRY_NUM = 3;
+  private static final Pattern PATTERN = Pattern.compile("[-]?[0-9]+[.]?[0-9]*[dD]?");
+  private static final int TRY_NUM = 3;
   private int groupNum;
   private Session session;
-  private ConcurrentHashMap<String, ConcurrentHashMap<String, ConcurrentHashMap<String, TSDataType>>> schema;
+  private Map<String, Map<String, Map<String, TSDataType>>> schema;
 
   private AtomicLong timeSeriesNum;
   private AtomicLong pointNum;
@@ -50,8 +49,7 @@ public class IoTDB {
     }
   }
 
-  public IoTDB(Session session,
-      ConcurrentHashMap<String, ConcurrentHashMap<String, ConcurrentHashMap<String, TSDataType>>> schema,
+  public IoTDB(Session session, Map<String, Map<String, Map<String, TSDataType>>> schema,
       AtomicLong timeSeriesNum, AtomicLong pointNum,
       AtomicLong dropPointNum) {
     this.session = session;
@@ -69,7 +67,6 @@ public class IoTDB {
       } catch (IoTDBSessionException e) {
         LOGGER.error("An exception occurred when registering a storage group {}, because {}",
             GROUP_PREFIX + i, e);
-        e.printStackTrace();
         throw e;
       }
     }
@@ -82,7 +79,7 @@ public class IoTDB {
   /**
    * @return true-if succeed, false-if fail.
    */
-  public boolean registerTimeSeries(String wfid, String wtid, String metric, boolean isNumType) {
+  private boolean registerTimeSeries(String wfid, String wtid, String metric, boolean isNumType) {
     StringBuilder path = new StringBuilder(genPathPrefix(wfid, wtid)).append(".");
     LOGGER
         .debug("Register timeseries path = {}, isDouble = {}", path.toString() + metric, isNumType);
@@ -98,6 +95,8 @@ public class IoTDB {
       }
       if (resp.statusType.getCode() ==  TSStatusCode.SUCCESS_STATUS.getStatusCode()) {
         timeSeriesNum.incrementAndGet();
+        return true;
+      } else if (resp.statusType.getMessage().contains("already exist")) {
         return true;
       } else {
         LOGGER
@@ -117,7 +116,7 @@ public class IoTDB {
     }
     schema.putIfAbsent(wfid, new ConcurrentHashMap<>());
     schema.get(wfid).putIfAbsent(wtid, new ConcurrentHashMap<>());
-    ConcurrentHashMap<String, TSDataType> metricTypeMap = schema.get(wfid).get(wtid);
+    Map<String, TSDataType> metricTypeMap = schema.get(wfid).get(wtid);
 
     String deviceId = genPathPrefix(wfid, wtid);
     Iterator<Entry<String, Object>> iterable = metricMap.entrySet().iterator();
@@ -149,8 +148,9 @@ public class IoTDB {
     if (metricMap.isEmpty()) {
       return;
     }
-    List<String> metricNameList = new ArrayList();
-    List<String> metricValueList = new ArrayList(metricMap.values());
+    List<String> metricNameList = new ArrayList<>();
+    List<String> metricValueList = new ArrayList<>();
+    metricMap.values().forEach(v -> metricValueList.add(v.toString()));
 
     for(String k : metricMap.keySet()){
       if(metricTypeMap.get(k).equals(TSDataType.DOUBLE)){
@@ -186,7 +186,7 @@ public class IoTDB {
   }
 
   private void registerSchema(String wfid, String wtid, String metric, boolean isNumType) {
-    ConcurrentHashMap<String, TSDataType> metricTypeMap = schema.get(wfid).get(wtid);
+    Map<String, TSDataType> metricTypeMap = schema.get(wfid).get(wtid);
     synchronized (metricTypeMap) {
       if (!metricTypeMap.containsKey(metric)) {
         for (int i = 0; i < TRY_NUM; i++) {
@@ -210,8 +210,7 @@ public class IoTDB {
             try {
               session.open();
             } catch (IoTDBSessionException e) {
-              LOGGER.error("session create exception, {}", e);
-              e.printStackTrace();
+              LOGGER.error("session create exception: ", e);
             }
           }
         }
@@ -225,15 +224,12 @@ public class IoTDB {
     try {
       session.close();
     } catch (IoTDBSessionException e) {
-      e.printStackTrace();
-      LOGGER.error("close session error, because {}", e);
+      LOGGER.error("close session error, because:", e);
     }
   }
 
   private String genPathPrefix(String wfid, String wtid) {
-    StringBuilder path = new StringBuilder(GROUP_PREFIX);
-    path.append(wfid.hashCode() % groupNum).append(".").append(wfid).append(".").append(wtid);
-    return path.toString();
+    return GROUP_PREFIX + wfid.hashCode() % groupNum + "." + wfid + "." + wtid;
   }
   // count timeseries root;
 

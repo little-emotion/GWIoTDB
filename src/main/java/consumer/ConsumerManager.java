@@ -38,7 +38,6 @@ public class ConsumerManager {
 
   private static final Logger logger = LoggerFactory.getLogger(ConsumerManager.class);
 
-  private Properties properties;
   private ConsumerConnector consumerConnector;
   private ExecutorService consumerPool;
 
@@ -49,15 +48,14 @@ public class ConsumerManager {
   /**
    * outer map: key--wfid, inner map: key--wtid, value--set of names in fields.
    */
-  private ConcurrentHashMap<String, ConcurrentHashMap<String, ConcurrentHashMap <String, TSDataType> >> schema;
+  private Map<String, Map<String, Map <String, TSDataType> >> schema;
 
 
   private AtomicLong timeSeriesNum = new AtomicLong();
   private AtomicLong insertPointNum = new AtomicLong();
   private AtomicLong dropPointNum = new AtomicLong();
 
-  public ConsumerManager(Properties properties) {
-    this.properties = properties;
+  private ConsumerManager(Properties properties) {
 
     properties.put("zookeeper.session.timeout.ms", "4000");
     properties.put("zookeeper.sync.internalTime.ms", "200");
@@ -79,7 +77,7 @@ public class ConsumerManager {
     schema = new ConcurrentHashMap<>();
   }
 
-  public void consume() throws IoTDBSessionException {
+  private void consume() throws IoTDBSessionException {
     Map<String, Integer> topicCountMap = new HashMap<>();
     topicCountMap.put(topic, threadNum);
 
@@ -121,7 +119,7 @@ public class ConsumerManager {
         ioTDB = new IoTDB(session, schema, timeSeriesNum, pointNum, dropPointNum);
         ioTDB.setGroupNum(groupNum);
       } catch (IoTDBSessionException e) {
-        e.printStackTrace();
+        logger.error("Cannot init connection:", e);
       }
     }
 
@@ -146,10 +144,9 @@ public class ConsumerManager {
           String wtid = tags.get("wtid").toString();
           ioTDB.insert(wfid, wtid, timestamp, fields.toMap());
         } catch (Exception e) {
-          if(!e.toString().contains(null)){
+          if(!e.toString().contains("null")){
             logger.error("Receiving msg failed.", e);
           }
-          continue;
         }
       }
     }
@@ -174,7 +171,7 @@ public class ConsumerManager {
     long lastNum;
     long internalTime;
 
-    public LogThread(long internalTimeIns) {
+    LogThread(long internalTimeIns) {
       this.internalTime = internalTimeIns;
       this.lastNum = 0;
     }

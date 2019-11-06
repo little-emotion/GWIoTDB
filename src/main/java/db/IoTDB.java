@@ -65,6 +65,9 @@ public class IoTDB {
       try {
         session.setStorageGroup(GROUP_PREFIX + i);
       } catch (IoTDBSessionException e) {
+        if(e.getMessage().contains("already exist")){
+          return;
+        }
         LOGGER.error("An exception occurred when registering a storage group {}, because {}",
             GROUP_PREFIX + i, e);
         throw e;

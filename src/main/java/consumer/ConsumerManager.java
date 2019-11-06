@@ -157,6 +157,9 @@ public class ConsumerManager {
   public static void main(String[] args) throws IoTDBSessionException {
     // TODO read the properties, create a manager and run it
     Properties properties = loadProperties();
+    if(args.length > 0){
+      properties.put("iotdb_ip", args[0]);
+    }
     ConsumerManager manager = new ConsumerManager(properties);
     manager.consume();
 

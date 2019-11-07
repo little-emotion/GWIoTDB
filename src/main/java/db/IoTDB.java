@@ -128,29 +128,39 @@ public class IoTDB {
       String metric = entry.getKey();
       // include
       if (metricTypeMap.containsKey(metric)) {
-        // text
-        if (metricTypeMap.get(metric).equals(TSDataType.TEXT)) {
-          metricMap.put(metric, "'" + metricMap.get(metric) + "'");
-        }
-        else {
-          if(isStringType(metric, entry.getValue().toString())){
-            iterable.remove();
-          }
-        }
         continue;
       }
       // not include
+      boolean res;
       if (isStringType(metric, entry.getValue().toString())) {
-        registerSchema(wfid, wtid, metric, false);
-        metricMap.put(metric, "'" + metricMap.get(metric) + "'");
+        res = registerSchema(wfid, wtid, metric, false);
       } else {
-        registerSchema(wfid, wtid, metric, true);
+        res = registerSchema(wfid, wtid, metric, true);
+      }
+      if(!res){
+        iterable.remove();
       }
     }
 
     if (metricMap.isEmpty()) {
       return;
     }
+
+    iterable = metricMap.entrySet().iterator();
+    while (iterable.hasNext()) {
+      Entry<String, Object> entry = iterable.next();
+      String metric = entry.getKey();
+
+      // text
+      if (metricTypeMap.get(metric).equals(TSDataType.TEXT)) {
+        metricMap.put(metric, "'" + metricMap.get(metric) + "'");
+      } else {
+        if (isStringType(metric, entry.getValue().toString())) {
+          iterable.remove();
+        }
+      }
+    }
+
     List<String> metricNameList = new ArrayList<>();
     List<String> metricValueList = new ArrayList<>();
     metricMap.values().forEach(v -> metricValueList.add(v.toString()));
@@ -188,11 +198,10 @@ public class IoTDB {
     return !isNum.matches();
   }
 
-  private void registerSchema(String wfid, String wtid, String metric, boolean isNumType) {
+  private boolean registerSchema(String wfid, String wtid, String metric, boolean isNumType) {
     Map<String, TSDataType> metricTypeMap = schema.get(wfid).get(wtid);
     synchronized (metricTypeMap) {
       if (!metricTypeMap.containsKey(metric)) {
-        for (int i = 0; i < TRY_NUM; i++) {
           //register
           boolean res = registerTimeSeries(wfid, wtid, metric, isNumType);
           //success
@@ -202,25 +211,11 @@ public class IoTDB {
             } else {
               metricTypeMap.put(metric, TSDataType.TEXT);
             }
-            break;
+            return true;
           }
-          // retry
-          else {
-            session = new Session(IOTDB_IP.getDefaultValue().toString(),
-                IOTDB_PORT.getDefaultValue().toString(),
-                IOTDB_USER.getDefaultValue().toString(),
-                IOTDB_PASSWARD.getDefaultValue().toString());
-            try {
-              session.open();
-            } catch (IoTDBSessionException e) {
-              LOGGER.error("session create exception: ", e);
-            }
-          }
-        }
       }// if
-
     }
-
+    return false;
   }
 
   public void closeSession() {

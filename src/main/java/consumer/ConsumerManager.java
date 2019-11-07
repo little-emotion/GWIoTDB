@@ -57,7 +57,7 @@ public class ConsumerManager {
 
   private ConsumerManager(Properties properties) {
 
-    properties.put("zookeeper.session.timeout.ms", "4000");
+    properties.put("zookeeper.session.timeout.ms", "8000");
     properties.put("zookeeper.sync.internalTime.ms", "200");
     properties.put("auto.commit.interval.ms", "5000");
     properties.put("auto.offset.reset", "smallest");
@@ -144,7 +144,7 @@ public class ConsumerManager {
           String wtid = tags.get("wtid").toString();
           ioTDB.insert(wfid, wtid, timestamp, fields.toMap());
         } catch (Exception e) {
-          if(!e.toString().contains("null")){
+          if(!e.getMessage().contains("null")){
             logger.error("Receiving msg failed.", e);
           }
         }

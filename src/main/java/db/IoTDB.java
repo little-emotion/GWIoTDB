@@ -29,12 +29,9 @@ public class IoTDB {
   private static final Logger LOGGER = LoggerFactory.getLogger(IoTDB.class);
   private static final String GROUP_PREFIX = "root.g_";
   private static final Pattern PATTERN = Pattern.compile("[-]?[0-9]+[.]?[0-9]*[dD]?");
-  private static final int TRY_NUM = 3;
   private int groupNum;
   private Session session;
-  private Map<String, Map<String, Map<String, TSDataType>>> schema;
 
-  private AtomicLong timeSeriesNum;
   private AtomicLong pointNum;
   private AtomicLong dropPointNum;
 
@@ -49,14 +46,10 @@ public class IoTDB {
     }
   }
 
-  public IoTDB(Session session, Map<String, Map<String, Map<String, TSDataType>>> schema,
-      AtomicLong timeSeriesNum, AtomicLong pointNum,
-      AtomicLong dropPointNum) {
+  public IoTDB(Session session, AtomicLong pointNum, AtomicLong dropPointNum) {
     this.session = session;
-    this.timeSeriesNum = timeSeriesNum;
     this.pointNum = pointNum;
     this.dropPointNum = dropPointNum;
-    this.schema = schema;
   }
 
   public void registerStorageGroup(int num) throws IoTDBSessionException {
@@ -79,100 +72,36 @@ public class IoTDB {
     this.groupNum = groupNum;
   }
 
-  /**
-   * @return true-if succeed, false-if fail.
-   */
-  private boolean registerTimeSeries(String wfid, String wtid, String metric, boolean isNumType) {
-    StringBuilder path = new StringBuilder(genPathPrefix(wfid, wtid)).append(".");
-    LOGGER
-        .debug("Register timeseries path = {}, isDouble = {}", path.toString() + metric, isNumType);
-    TSStatus resp;
-    try {
-      if (isNumType) {
-        resp = session
-            .createTimeseries(path.toString() + metric+"_NUM", TSDataType.DOUBLE, TSEncoding.GORILLA,
-                CompressionType.SNAPPY);
-      } else {
-        resp = session.createTimeseries(path.toString() + metric+"_STR", TSDataType.TEXT, TSEncoding.PLAIN,
-            CompressionType.SNAPPY);
-      }
-      if (resp.statusType.getCode() ==  TSStatusCode.SUCCESS_STATUS.getStatusCode()) {
-        timeSeriesNum.incrementAndGet();
-        return true;
-      } else if (resp.statusType.getMessage().contains("already exist")) {
-        return true;
-      } else {
-        LOGGER
-            .error("Register error, path = {}, isDouble = {}", path.toString() + metric, isNumType);
-        return false;
-      }
-    } catch (IoTDBSessionException e) {
-      LOGGER.error("An exception occurred when registering a timeseries {}, because {}",
-          path.toString() + metric, e);
-      return false;
-    }
-  }
+
 
   public void insert(String wfid, String wtid, long time, Map<String, Object> metricMap) {
     if (metricMap.isEmpty()) {
       return;
     }
-    schema.putIfAbsent(wfid, new ConcurrentHashMap<>());
-    schema.get(wfid).putIfAbsent(wtid, new ConcurrentHashMap<>());
-    Map<String, TSDataType> metricTypeMap = schema.get(wfid).get(wtid);
 
     String deviceId = genPathPrefix(wfid, wtid);
+    List<String> metricNameList = new ArrayList<>();
+    List<String> metricValueList = new ArrayList<>();
     Iterator<Entry<String, Object>> iterable = metricMap.entrySet().iterator();
     while (iterable.hasNext()) {
       Entry<String, Object> entry = iterable.next();
       String metric = entry.getKey();
-      // include
-      if (metricTypeMap.containsKey(metric)) {
-        continue;
+      String value = entry.getValue().toString();
+      if (isStringType(metric, value)) {
+        metricNameList.add(metric+"_STR");
+        metricValueList.add("'"+value+"'");
       }
-      // not include
-      boolean res;
-      if (isStringType(metric, entry.getValue().toString())) {
-        res = registerSchema(wfid, wtid, metric, false);
-      } else {
-        res = registerSchema(wfid, wtid, metric, true);
-      }
-      if(!res){
-        iterable.remove();
-      }
-    }
-
-    if (metricMap.isEmpty()) {
-      return;
-    }
-
-    iterable = metricMap.entrySet().iterator();
-    while (iterable.hasNext()) {
-      Entry<String, Object> entry = iterable.next();
-      String metric = entry.getKey();
-
-      // text
-      if (metricTypeMap.get(metric).equals(TSDataType.TEXT)) {
-        metricMap.put(metric, "'" + metricMap.get(metric) + "'");
-      } else {
-        if (isStringType(metric, entry.getValue().toString())) {
-          iterable.remove();
+      else {
+        metricNameList.add(metric+"_NUM");
+        if(value.contains(".")){
+          metricValueList.add(value);
+        }
+        else {
+          metricValueList.add(value+".0");
         }
       }
     }
 
-    List<String> metricNameList = new ArrayList<>();
-    List<String> metricValueList = new ArrayList<>();
-    metricMap.values().forEach(v -> metricValueList.add(v.toString()));
-
-    for(String k : metricMap.keySet()){
-      if(metricTypeMap.get(k).equals(TSDataType.DOUBLE)){
-        metricNameList.add(k+"_NUM");
-      }
-      else {
-        metricNameList.add(k+"_STR");
-      }
-    }
     try {
       TSStatus resp = session.insert(deviceId, time, metricNameList, metricValueList);
       if (resp.statusType.getCode() ==  TSStatusCode.SUCCESS_STATUS.getStatusCode()) {
@@ -196,26 +125,6 @@ public class IoTDB {
     }
     Matcher isNum = PATTERN.matcher(value);
     return !isNum.matches();
-  }
-
-  private boolean registerSchema(String wfid, String wtid, String metric, boolean isNumType) {
-    Map<String, TSDataType> metricTypeMap = schema.get(wfid).get(wtid);
-    synchronized (metricTypeMap) {
-      if (!metricTypeMap.containsKey(metric)) {
-          //register
-          boolean res = registerTimeSeries(wfid, wtid, metric, isNumType);
-          //success
-          if (res) {
-            if (isNumType) {
-              metricTypeMap.put(metric, TSDataType.DOUBLE);
-            } else {
-              metricTypeMap.put(metric, TSDataType.TEXT);
-            }
-            return true;
-          }
-      }// if
-    }
-    return false;
   }
 
   public void closeSession() {

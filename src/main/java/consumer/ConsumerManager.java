@@ -45,13 +45,6 @@ public class ConsumerManager {
   private int groupNum;
   private String topic;
 
-  /**
-   * outer map: key--wfid, inner map: key--wtid, value--set of names in fields.
-   */
-  private Map<String, Map<String, Map <String, TSDataType> >> schema;
-
-
-  private AtomicLong timeSeriesNum = new AtomicLong();
   private AtomicLong insertPointNum = new AtomicLong();
   private AtomicLong dropPointNum = new AtomicLong();
 
@@ -59,9 +52,9 @@ public class ConsumerManager {
 
     properties.put("zookeeper.session.timeout.ms", "8000");
     properties.put("zookeeper.sync.internalTime.ms", "200");
-    properties.put("auto.commit.interval.ms", "5000");
+    properties.put("auto.commit.interval.ms", "1000");
     properties.put("auto.offset.reset", "smallest");
-    properties.put("auto.commit.enable", "false");
+    properties.put("auto.commit.enable", "true");
     properties.put("serializer.class", "kafka.serializer.StringEncoder");
 
     ConsumerConfig config = new ConsumerConfig(properties);
@@ -73,8 +66,6 @@ public class ConsumerManager {
         TOPIC.getDefaultValue().toString());
 
     consumerPool = Executors.newFixedThreadPool(threadNum);
-
-    schema = new ConcurrentHashMap<>();
   }
 
   private void consume() throws IoTDBSessionException {
@@ -91,7 +82,7 @@ public class ConsumerManager {
     ioTDB.registerStorageGroup(groupNum);
     ioTDB.closeSession();
     for (final KafkaStream<String, String> stream : streams) {
-      consumerPool.submit(new ConsumeTask(stream, timeSeriesNum, insertPointNum, dropPointNum));
+      consumerPool.submit(new ConsumeTask(stream, insertPointNum, dropPointNum));
     }
   }
 
@@ -102,13 +93,12 @@ public class ConsumerManager {
     private KafkaStream<String, String> stream;
     private IoTDB ioTDB;
 
-    private ConsumeTask(KafkaStream<String, String> stream, AtomicLong timeSeriesNum,
-        AtomicLong pointNum, AtomicLong dropPointNum) {
+    private ConsumeTask(KafkaStream<String, String> stream, AtomicLong pointNum, AtomicLong dropPointNum) {
       this.stream = stream;
-      initDBConnection(timeSeriesNum, pointNum, dropPointNum);
+      initDBConnection(pointNum, dropPointNum);
     }
 
-    private void initDBConnection(AtomicLong timeSeriesNum, AtomicLong pointNum,
+    private void initDBConnection( AtomicLong pointNum,
         AtomicLong dropPointNum) {
 
       Session session = new Session(IOTDB_IP.getDefaultValue().toString(),
@@ -116,7 +106,7 @@ public class ConsumerManager {
           IOTDB_PASSWARD.getDefaultValue().toString());
       try {
         session.open();
-        ioTDB = new IoTDB(session, schema, timeSeriesNum, pointNum, dropPointNum);
+        ioTDB = new IoTDB(session, pointNum, dropPointNum);
         ioTDB.setGroupNum(groupNum);
       } catch (IoTDBSessionException e) {
         logger.error("Cannot init connection:", e);
@@ -183,8 +173,8 @@ public class ConsumerManager {
     public void run() {
       long nowNum = insertPointNum.get();
       logger.info(
-          "Total timeseries number is {}, success points number is {}, rate is {} points/s. Error points num is {}.",
-          timeSeriesNum.get(), nowNum, (nowNum - lastNum) / internalTime, dropPointNum.get());
+          "Total success points number is {}, rate is {} points/s. Error points num is {}.",
+        nowNum, (nowNum - lastNum) / internalTime, dropPointNum.get());
       lastNum = nowNum;
 
     }

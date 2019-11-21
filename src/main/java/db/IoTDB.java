@@ -101,19 +101,19 @@ public class IoTDB {
         }
       }
     }
-
-    try {
-      TSStatus resp = session.insert(deviceId, time, metricNameList, metricValueList);
-      if (resp.statusType.getCode() ==  TSStatusCode.SUCCESS_STATUS.getStatusCode()) {
-        pointNum.getAndAdd(metricValueList.size());
-      } else {
-        dropPointNum.getAndAdd(metricValueList.size());
-      }
-
-    } catch (IoTDBSessionException e) {
-      LOGGER.error("An exception occurred when insert, time = {}, device = {} because {}", time,
-          deviceId, e);
-    }
+    pointNum.getAndAdd(metricValueList.size());
+//    try {
+//      TSStatus resp = session.insert(deviceId, time, metricNameList, metricValueList);
+//      if (resp.statusType.getCode() ==  TSStatusCode.SUCCESS_STATUS.getStatusCode()) {
+//        pointNum.getAndAdd(metricValueList.size());
+//      } else {
+//        dropPointNum.getAndAdd(metricValueList.size());
+//      }
+//
+//    } catch (IoTDBSessionException e) {
+//      LOGGER.error("An exception occurred when insert, time = {}, device = {} because {}", time,
+//          deviceId, e);
+//    }
   }
 
   private boolean isStringType(String metric, String value) {

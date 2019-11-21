@@ -153,7 +153,7 @@ public class ConsumerManager {
     ConsumerManager manager = new ConsumerManager(properties);
     manager.consume();
 
-    long internalTimeIns = 60;
+    long internalTimeIns = 6;
     new ScheduledThreadPoolExecutor(1)
         .scheduleAtFixedRate(manager.new LogThread(internalTimeIns), 0, internalTimeIns,
             TimeUnit.SECONDS);

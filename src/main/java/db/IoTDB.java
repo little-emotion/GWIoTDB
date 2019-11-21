@@ -5,12 +5,10 @@ import static consumer.ConsumerProperties.IOTDB_PASSWARD;
 import static consumer.ConsumerProperties.IOTDB_PORT;
 import static consumer.ConsumerProperties.IOTDB_USER;
 
+import java.text.ParseException;
+import java.text.SimpleDateFormat;
 import java.util.ArrayList;
-import java.util.Iterator;
 import java.util.List;
-import java.util.Map;
-import java.util.Map.Entry;
-import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
@@ -18,9 +16,6 @@ import org.apache.iotdb.rpc.TSStatusCode;
 import org.apache.iotdb.service.rpc.thrift.TSStatus;
 import org.apache.iotdb.session.IoTDBSessionException;
 import org.apache.iotdb.session.Session;
-import org.apache.iotdb.tsfile.file.metadata.enums.CompressionType;
-import org.apache.iotdb.tsfile.file.metadata.enums.TSDataType;
-import org.apache.iotdb.tsfile.file.metadata.enums.TSEncoding;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -34,6 +29,9 @@ public class IoTDB {
 
   private AtomicLong pointNum;
   private AtomicLong dropPointNum;
+
+  //2019-03-01 00:01:39
+  private SimpleDateFormat df = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss");
 
   public IoTDB() {
     try {
@@ -62,7 +60,7 @@ public class IoTDB {
           return;
         }
         LOGGER.error("An exception occurred when registering a storage group {}, because {}",
-            GROUP_PREFIX + i, e);
+            GROUP_PREFIX + i, e.toString());
         throw e;
       }
     }
@@ -73,33 +71,34 @@ public class IoTDB {
   }
 
 
-
-  public void insert(String wfid, String wtid, long time, Map<String, Object> metricMap) {
-    if (metricMap.isEmpty()) {
+  public void insert(List<String> metricNameList, String[] valueArray) {
+    if(valueArray.length < 3){
       return;
     }
+    String wfid = valueArray[1];
+    String wtid = valueArray[2];
 
     String deviceId = genPathPrefix(wfid, wtid);
-    List<String> metricNameList = new ArrayList<>();
     List<String> metricValueList = new ArrayList<>();
-    Iterator<Entry<String, Object>> iterable = metricMap.entrySet().iterator();
-    while (iterable.hasNext()) {
-      Entry<String, Object> entry = iterable.next();
-      String metric = entry.getKey();
-      String value = entry.getValue().toString();
-      if (isStringType(metric, value)) {
-        metricNameList.add(metric+"_STR");
-        metricValueList.add("'"+value+"'");
+
+    for (int i = 3; i < valueArray.length; i++) {
+      String value = valueArray[i];
+      if(value.contains(".")){
+        metricValueList.add(value);
       }
       else {
-        metricNameList.add(metric+"_NUM");
-        if(value.contains(".")){
-          metricValueList.add(value);
-        }
-        else {
-          metricValueList.add(value+".0");
-        }
+        metricValueList.add(value+".0");
       }
+    }
+
+    String timeStr = valueArray[0];
+    long time = 0;
+    try {
+      time = df.parse(timeStr).getTime();
+    } catch (ParseException e) {
+      dropPointNum.getAndAdd(metricValueList.size());
+      LOGGER.error("timestr {} can't be parsed.", timeStr);
+      return;
     }
 
     try {
@@ -111,8 +110,8 @@ public class IoTDB {
       }
 
     } catch (IoTDBSessionException e) {
-      LOGGER.error("An exception occurred when insert, time = {}, device = {} because {}", time,
-          deviceId, e);
+      LOGGER.error("An exception occurred when insert, time = {}, device = {}, metric = {}, value = {} because {}", time,
+          deviceId, metricNameList, metricValueList, e);
     }
   }
 

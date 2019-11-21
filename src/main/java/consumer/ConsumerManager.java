@@ -7,30 +7,23 @@ import static consumer.ConsumerProperties.IOTDB_IP;
 import static consumer.ConsumerProperties.IOTDB_PASSWARD;
 import static consumer.ConsumerProperties.IOTDB_PORT;
 import static consumer.ConsumerProperties.IOTDB_USER;
-import static consumer.ConsumerProperties.TOPIC;
 
+import com.csvreader.CsvReader;
 import db.IoTDB;
-import java.util.HashMap;
+import java.io.File;
+import java.nio.charset.Charset;
+import java.util.ArrayList;
+import java.util.LinkedList;
 import java.util.List;
-import java.util.Map;
 import java.util.Properties;
-import java.util.concurrent.ConcurrentHashMap;
+import java.util.Queue;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicLong;
-import kafka.consumer.Consumer;
-import kafka.consumer.ConsumerConfig;
-import kafka.consumer.KafkaStream;
-import kafka.javaapi.consumer.ConsumerConnector;
-import kafka.message.MessageAndMetadata;
-import kafka.serializer.StringDecoder;
-import kafka.utils.VerifiableProperties;
 import org.apache.iotdb.session.IoTDBSessionException;
 import org.apache.iotdb.session.Session;
-import org.apache.iotdb.tsfile.file.metadata.enums.TSDataType;
-import org.json.JSONObject;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -38,51 +31,37 @@ public class ConsumerManager {
 
   private static final Logger logger = LoggerFactory.getLogger(ConsumerManager.class);
 
-  private ConsumerConnector consumerConnector;
   private ExecutorService consumerPool;
 
   private int threadNum;
   private int groupNum;
-  private String topic;
 
   private AtomicLong insertPointNum = new AtomicLong();
   private AtomicLong dropPointNum = new AtomicLong();
 
+  public static char separator = ',';
+  public final static String DIR = "/data6/csv";
+
   private ConsumerManager(Properties properties) {
-
-    properties.put("zookeeper.session.timeout.ms", "8000");
-    properties.put("zookeeper.sync.internalTime.ms", "200");
-    properties.put("auto.commit.interval.ms", "1000");
-    properties.put("auto.offset.reset", "smallest");
-    properties.put("auto.commit.enable", "true");
-    properties.put("serializer.class", "kafka.serializer.StringEncoder");
-
-    ConsumerConfig config = new ConsumerConfig(properties);
-    consumerConnector = Consumer.createJavaConsumerConnector(config);
     threadNum = Integer.parseInt(properties
         .getProperty(CONSUMER_THREAD_NUM.getPropertyName(),
             CONSUMER_THREAD_NUM.getDefaultValue().toString()));
-    topic = properties.getProperty(TOPIC.getPropertyName(),
-        TOPIC.getDefaultValue().toString());
 
     consumerPool = Executors.newFixedThreadPool(threadNum);
   }
 
   private void consume() throws IoTDBSessionException {
-    Map<String, Integer> topicCountMap = new HashMap<>();
-    topicCountMap.put(topic, threadNum);
 
-    StringDecoder keyDecoder = new StringDecoder(new VerifiableProperties());
-    StringDecoder valueDecoder = new StringDecoder(new VerifiableProperties());
-    Map<String, List<KafkaStream<String, String>>> consumerMap = consumerConnector
-        .createMessageStreams(topicCountMap, keyDecoder, valueDecoder);
-    List<KafkaStream<String, String>> streams = consumerMap.get(topic);
     groupNum = Integer.parseInt(IOTDB_GROUP_NUM.getDefaultValue().toString());
     IoTDB ioTDB = new IoTDB();
     ioTDB.registerStorageGroup(groupNum);
     ioTDB.closeSession();
-    for (final KafkaStream<String, String> stream : streams) {
-      consumerPool.submit(new ConsumeTask(stream, insertPointNum, dropPointNum));
+
+    List<String> filePath = getAllCSVFile(DIR);
+    List<List<String>> threadPath = averageAssign(filePath, threadNum);
+
+    for (int i = 0; i<threadNum;i++) {
+      consumerPool.submit(new ConsumeTask(threadPath.get(i), insertPointNum, dropPointNum));
     }
   }
 
@@ -90,11 +69,14 @@ public class ConsumerManager {
 
   class ConsumeTask implements Runnable {
 
-    private KafkaStream<String, String> stream;
+    private List<String> fileList;
     private IoTDB ioTDB;
+    private int curIndex;
+    private CsvReader reader = null;
 
-    private ConsumeTask(KafkaStream<String, String> stream, AtomicLong pointNum, AtomicLong dropPointNum) {
-      this.stream = stream;
+    private ConsumeTask(List<String> fileList, AtomicLong pointNum, AtomicLong dropPointNum) {
+      this.fileList = fileList;
+      curIndex = 0;
       initDBConnection(pointNum, dropPointNum);
     }
 
@@ -114,33 +96,37 @@ public class ConsumerManager {
     }
 
     public void run() {
-      //get message
-      for (MessageAndMetadata<String, String> message : stream) {
-        String msg;
+      logger.info("{}" + Thread.currentThread().getName() + " run!" + fileList.toString());
+      while (curIndex < fileList.size()) {
         try {
-          msg = message.message();
-          logger.debug("msg:{}", msg);
-          JSONObject json = new JSONObject(msg);
-
-          String table = json.get("tstable").toString();
-          if (!table.equals("gw_scada_7s_extension")) {
-            continue;
+          //如果生产文件乱码，windows下用gbk，linux用UTF-8
+          reader = new CsvReader(fileList.get(curIndex), separator, Charset.forName("UTF-8"));
+          // 读取表头
+          reader.readHeaders();
+          String[] headArray = reader.getHeaders();//获取标题
+          List<String> headList = new ArrayList<>();
+          for (int i = 3; i < headArray.length; i++) {
+            headList.add(headArray[i].replace('.','_') + "_NUM");
           }
-
-          JSONObject tags = json.getJSONObject("tags");
-          JSONObject fields = json.getJSONObject("fields");
-          long timestamp = Long.parseLong(json.get("timestamp").toString());
-          String wfid = tags.get("wfid").toString();
-          String wtid = tags.get("wtid").toString();
-          ioTDB.insert(wfid, wtid, timestamp, fields.toMap());
+          // 逐条读取记录，直至读完
+          while (reader.readRecord()) {
+            String[] valueArray = reader.getValues();
+            ioTDB.insert(headList, valueArray);
+          }
+          logger.info("Thread {}, File {} completed. Progress {}/{}.",
+              Thread.currentThread().getName(), fileList.get(curIndex), curIndex+1, fileList.size());
         } catch (Exception e) {
-          if(!e.getMessage().contains("null")){
-            logger.error("Receiving msg failed.", e);
+          e.printStackTrace();
+        } finally {
+          curIndex++;
+
+          if (null != reader) {
+            reader.close();
           }
         }
       }
+      logger.info("Thread {} ended.", Thread.currentThread().getName());
     }
-
 
   }
 
@@ -183,8 +169,55 @@ public class ConsumerManager {
 
   private static Properties loadProperties() {
     Properties properties = new Properties();
-    properties.put("zookeeper.connect", ConsumerProperties.ZK_URL.getDefaultValue());
-    properties.put("group.id", ConsumerProperties.CONSUMER_GROUP_ID.getDefaultValue());
     return properties;
   }
+
+  private static List<String>  getAllCSVFile(String dir) {
+    List<String> fileNameList = new ArrayList<>();
+    //Traverse to find all tsfiles
+    File file = new File(dir);
+    Queue<File> tmp = new LinkedList<>();
+    tmp.add(file);
+
+    if (file.exists()) {
+      while (!tmp.isEmpty()) {
+        File tmp_file = tmp.poll();
+        File[] files = tmp_file.listFiles();
+        for (File file2 : files) {
+          if (file2.isDirectory()) {
+            tmp.add(file2);
+          } else {
+            if (file2.getName().endsWith(".csv") && file2.getName().startsWith("real")) {
+              fileNameList.add(file2.getAbsolutePath());
+            }
+          }
+        }
+      }
+    }
+    return fileNameList;
+  }
+
+  public static <T> List<List<T>> averageAssign(List<T> source, int n) {
+    List<List<T>> result = new ArrayList<>();
+    //(先计算出余数)
+    int remainder = source.size() % n;
+    //然后是商
+    int number = source.size() / n;
+    //偏移量
+    int offset = 0;
+    for (int i = 0; i < n; i++) {
+      List<T> value;
+      if (remainder > 0) {
+        value = source.subList(i * number + offset, (i + 1) * number + offset + 1);
+        remainder--;
+        offset++;
+      } else {
+        value = source.subList(i * number + offset, (i + 1) * number + offset);
+      }
+      result.add(value);
+    }
+    return result;
+  }
+
+
 }

@@ -13,8 +13,11 @@ import db.IoTDB;
 import java.io.File;
 import java.nio.charset.Charset;
 import java.util.ArrayList;
+import java.util.Comparator;
+import java.util.HashMap;
 import java.util.LinkedList;
 import java.util.List;
+import java.util.Map;
 import java.util.Properties;
 import java.util.Queue;
 import java.util.concurrent.ExecutorService;
@@ -46,8 +49,6 @@ public class ConsumerManager {
     threadNum = Integer.parseInt(properties
         .getProperty(CONSUMER_THREAD_NUM.getPropertyName(),
             CONSUMER_THREAD_NUM.getDefaultValue().toString()));
-
-    consumerPool = Executors.newFixedThreadPool(threadNum);
   }
 
   private void consume() throws IoTDBSessionException {
@@ -58,10 +59,35 @@ public class ConsumerManager {
     ioTDB.closeSession();
 
     List<String> filePath = getAllCSVFile(DIR);
-    List<List<String>> threadPath = averageAssign(filePath, threadNum);
+    filePath.sort(new Comparator<String>() {
+      @Override
+      public int compare(String o1, String o2) {
+        //real_640401057_20191013.csv
+        o1 = o1.replace(".csv","");
+        o2 = o2.replace(".csv","");
 
-    for (int i = 0; i<threadNum;i++) {
+        String[] o1Arr = o1.split("_");
+        String[] o2Arr = o2.split("_");
+
+        int wfid1 = Integer.parseInt(o1Arr[1]);
+        int wfid2 = Integer.parseInt(o2Arr[1]);
+        if(wfid1 != wfid2){
+          return wfid1 - wfid2;
+        }
+
+        int date1 = Integer.parseInt(o1Arr[2]);
+        int date2 = Integer.parseInt(o2Arr[2]);
+
+        return date1 - date2;
+      }
+    });
+    List<List<String>> threadPath = averageAssign(filePath);
+
+    logger.info("total file num is {}, total device is {}.", filePath.size(), threadPath.size());
+    consumerPool = Executors.newFixedThreadPool(threadPath.size());
+    for (int i = 0; i<threadPath.size();i++) {
       consumerPool.submit(new ConsumeTask(threadPath.get(i), insertPointNum, dropPointNum));
+      //consumerPool.submit(new ConsumeTask(filePath, insertPointNum, dropPointNum));
     }
   }
 
@@ -195,6 +221,26 @@ public class ConsumerManager {
       }
     }
     return fileNameList;
+  }
+
+  public static List<List<String>> averageAssign(List<String> source) {
+
+
+    Map<Integer, List<String>> mp = new HashMap<>();
+    for(String str : source){
+      //real_640401057_20191013.csv
+      String o1 = str.replace(".csv","");
+      String[] o1Arr = o1.split("_");
+      int wfid1 = Integer.parseInt(o1Arr[1]);
+      //int date1 = Integer.parseInt(o1Arr[2]);
+      mp.putIfAbsent(wfid1, new ArrayList<>());
+      mp.get(wfid1).add(str);
+    }
+    List<List<String>> result = new ArrayList<>();
+    for(List<String> fileList : mp.values()){
+      result.add(fileList);
+    }
+    return result;
   }
 
   public static <T> List<List<T>> averageAssign(List<T> source, int n) {
